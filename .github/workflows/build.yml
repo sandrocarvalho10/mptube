@@ -1,0 +1,102 @@
+name: Build mptube
+
+on:
+  push:
+    tags:
+      - "v*"          # Dispara em tags: git tag v1.0.0 && git push --tags
+  workflow_dispatch:  # Permite rodar manualmente na aba Actions
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── macOS Apple Silicon ──────────────────────────────────────────
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS-arm64
+
+          # ── macOS Intel ──────────────────────────────────────────────────
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macOS-x64
+
+          # ── Windows x64 ──────────────────────────────────────────────────
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+
+    runs-on: ${{ matrix.platform }}
+    name: Build ${{ matrix.label }}
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node.js ───────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # ── pnpm ─────────────────────────────────────────────────────────────
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      # ── Rust ──────────────────────────────────────────────────────────────
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # ── Cache Rust ────────────────────────────────────────────────────────
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # ── Instalar dependências JS ──────────────────────────────────────────
+      - name: Install JS dependencies
+        run: pnpm install
+
+      # ── Baixar binários externos (yt-dlp) ─────────────────────────────────
+      - name: Download yt-dlp binaries (macOS)
+        if: runner.os == 'macOS'
+        run: bash scripts/download-binaries.sh
+
+      - name: Download yt-dlp binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Invoke-RestMethod "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest").tag_name
+          $url = "https://github.com/yt-dlp/yt-dlp/releases/download/$version/yt-dlp.exe"
+          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
+          Invoke-WebRequest -Uri $url -OutFile "src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe"
+          Write-Host "Downloaded yt-dlp $version"
+
+      # ── Build Tauri ───────────────────────────────────────────────────────
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "mptube ${{ github.ref_name }}"
+          releaseBody: |
+            ## mptube ${{ github.ref_name }}
+
+            ### Downloads
+            - **macOS Apple Silicon** → `.dmg` (aarch64)
+            - **macOS Intel** → `.dmg` (x86_64)
+            - **Windows** → `.msi` (instalador) ou `.exe` (NSIS)
+
+            ### Requisitos
+            - **Windows:** instale [ffmpeg](https://ffmpeg.org/download.html) e adicione ao PATH para conversão de formato
+            - **macOS:** `brew install ffmpeg`
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
