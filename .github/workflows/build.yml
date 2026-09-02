@@ -5,6 +5,15 @@ on:
     tags:
       - "v*"          # Dispara em tags: git tag v1.0.0 && git push --tags
   workflow_dispatch:  # Permite rodar manualmente na aba Actions
+    inputs:
+      tag:
+        description: "Tag da release (ex: v1.0.0)"
+        required: true
+        default: "v0.1.0"
+
+# Permissão necessária para criar/editar releases no GitHub
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -109,8 +118,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "mptube ${{ github.ref_name }}"
+          tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: "mptube ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
             ## mptube ${{ github.ref_name }}
 
