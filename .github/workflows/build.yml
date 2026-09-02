@@ -78,6 +78,31 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile "src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe"
           Write-Host "Downloaded yt-dlp $version"
 
+      - name: Download ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Baixa ffmpeg essentials build (contém ffmpeg.exe ~80MB)
+          $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          $zipPath = "src-tauri/binaries/ffmpeg-win.zip"
+          Write-Host "→ Baixando ffmpeg..."
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile $zipPath
+          Write-Host "→ Extraindo ffmpeg.exe..."
+          $extractDir = "src-tauri/binaries/ffmpeg-extracted"
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+          # O zip tem subpasta com nome da versão; localiza ffmpeg.exe dentro de bin/
+          $ffmpegExe = Get-ChildItem -Path $extractDir -Recurse -Filter "ffmpeg.exe" |
+                       Where-Object { $_.DirectoryName -like "*\bin" } |
+                       Select-Object -First 1
+          if (-not $ffmpegExe) {
+            Write-Error "ffmpeg.exe nao encontrado no zip extraido"
+            exit 1
+          }
+          Copy-Item $ffmpegExe.FullName -Destination "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"
+          Remove-Item $zipPath -Force
+          Remove-Item $extractDir -Recurse -Force
+          Write-Host "✓ ffmpeg pronto em src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"
+
       # ── Build Tauri ───────────────────────────────────────────────────────
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -90,13 +115,11 @@ jobs:
             ## mptube ${{ github.ref_name }}
 
             ### Downloads
+            - **Windows** → `.msi` ou `.exe` — clique e instale, sem dependências extras
             - **macOS Apple Silicon** → `.dmg` (aarch64)
             - **macOS Intel** → `.dmg` (x86_64)
-            - **Windows** → `.msi` (instalador) ou `.exe` (NSIS)
 
-            ### Requisitos
-            - **Windows:** instale [ffmpeg](https://ffmpeg.org/download.html) e adicione ao PATH para conversão de formato
-            - **macOS:** `brew install ffmpeg`
+            > O yt-dlp e o ffmpeg já estão embutidos no instalador.
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}

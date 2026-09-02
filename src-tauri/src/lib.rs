@@ -124,7 +124,7 @@ pub mod commands {
             return "URL não suportada — verifique o link".to_string();
         }
         if diagnostic.contains("ffmpeg") && (diagnostic.contains("not found") || diagnostic.contains("No such file")) {
-            return "ffmpeg não encontrado — instale via 'brew install ffmpeg' (Mac) ou https://ffmpeg.org (Windows)".to_string();
+            return "ffmpeg não encontrado — reinstale o mptube para restaurar os binários".to_string();
         }
         if diagnostic.contains("Unable to download") && diagnostic.contains("Cookies") {
             return "Arquivo de cookies inválido ou expirado — exporte novamente".to_string();
@@ -145,42 +145,63 @@ pub mod commands {
             .unwrap_or_else(|| "Download falhou — verifique a URL e tente novamente".to_string())
     }
 
-    /// Resolve o caminho do binário yt-dlp.
-    /// 1. Tenta o binário embutido no bundle Tauri (externalBin)
-    /// 2. Fallback para o yt-dlp do PATH do sistema (dev / Homebrew)
-    fn resolve_ytdlp_bin(app: &AppHandle) -> String {
-        // tauri::api::process::current_binary retorna o executável do app.
-        // O Tauri coloca os externalBin na mesma pasta com sufixo de target triple.
+    /// Resolve o caminho de um binário embutido no bundle Tauri (externalBin).
+    /// Procura nas localizações conhecidas do Tauri para cada plataforma.
+    /// Se não encontrar no bundle, retorna o nome para buscar no PATH (fallback dev).
+    fn resolve_sidecar_bin(app: &AppHandle, name: &str) -> String {
         if let Ok(resource_path) = app.path().resource_dir() {
-            // No bundle, os sidecar ficam em:
-            //   macOS: Contents/MacOS/yt-dlp
-            //   Windows: yt-dlp.exe  (na pasta do .exe)
-            let sidecar = resource_path
-                .parent()                          // sai de Resources → Contents
-                .unwrap_or(&resource_path)
-                .join("MacOS")                     // macOS bundle path
-                .join("yt-dlp");
-
-            if sidecar.exists() {
-                return sidecar.to_string_lossy().to_string();
-            }
-
-            // Windows: mesmo diretório do executável
-            let sidecar_win = resource_path
+            // macOS: Contents/MacOS/<name>
+            let macos_path = resource_path
                 .parent()
                 .unwrap_or(&resource_path)
-                .join("yt-dlp.exe");
+                .join("MacOS")
+                .join(name);
+            if macos_path.exists() {
+                return macos_path.to_string_lossy().to_string();
+            }
 
-            if sidecar_win.exists() {
-                return sidecar_win.to_string_lossy().to_string();
+            // Windows: mesma pasta do executável, com extensão .exe
+            let win_path = resource_path
+                .parent()
+                .unwrap_or(&resource_path)
+                .join(format!("{}.exe", name));
+            if win_path.exists() {
+                return win_path.to_string_lossy().to_string();
+            }
+
+            // Fallback: diretório de resources direto (alguns builds do Tauri)
+            let res_path = resource_path.join(name);
+            if res_path.exists() {
+                return res_path.to_string_lossy().to_string();
+            }
+            let res_path_exe = resource_path.join(format!("{}.exe", name));
+            if res_path_exe.exists() {
+                return res_path_exe.to_string_lossy().to_string();
             }
         }
 
-        // Fallback: usa o yt-dlp do PATH (funciona em dev com Homebrew)
+        // Fallback: busca no PATH do sistema (dev com Homebrew / sistema)
         if cfg!(target_os = "windows") {
-            "yt-dlp.exe".to_string()
+            format!("{}.exe", name)
         } else {
-            "yt-dlp".to_string()
+            name.to_string()
+        }
+    }
+
+    /// Resolve o caminho do binário yt-dlp.
+    fn resolve_ytdlp_bin(app: &AppHandle) -> String {
+        resolve_sidecar_bin(app, "yt-dlp")
+    }
+
+    /// Resolve o caminho do binário ffmpeg embutido.
+    /// Retorna None se não encontrar no bundle (yt-dlp usará o ffmpeg do PATH).
+    fn resolve_ffmpeg_bin(app: &AppHandle) -> Option<String> {
+        let candidate = resolve_sidecar_bin(app, "ffmpeg");
+        // Se retornou só o nome (sem path absoluto), significa que não encontrou no bundle
+        if candidate == "ffmpeg" || candidate == "ffmpeg.exe" {
+            None
+        } else {
+            Some(candidate)
         }
     }
 
@@ -195,8 +216,16 @@ pub mod commands {
         format_arg: &str,
         download_dir: &str,
         cookie_file: Option<&str>,
+        ffmpeg_path: Option<&str>,
     ) -> Command {
         let mut cmd = Command::new(bin_path);
+
+        // ── ffmpeg bundled ────────────────────────────────────────────────────
+        // Se o ffmpeg está embutido no bundle, apontamos diretamente para ele.
+        // Isso garante que no Windows não seja necessário instalar o ffmpeg separado.
+        if let Some(ffmpeg) = ffmpeg_path {
+            cmd.arg("--ffmpeg-location").arg(ffmpeg);
+        }
 
         // ── Cookies ───────────────────────────────────────────────────────────
         if let Some(path) = cookie_file {
@@ -357,6 +386,7 @@ pub mod commands {
 
         let format_arg = build_format_arg(&media_type, &quality);
         let bin_path = resolve_ytdlp_bin(&app);
+        let ffmpeg_path = resolve_ffmpeg_bin(&app);
 
         // Lê o cookie_file do estado (não bloqueia por muito tempo)
         let cookie_file: Option<String> = state
@@ -394,6 +424,7 @@ pub mod commands {
                 &format_arg,
                 &download_dir,
                 cookie_file.as_deref(),
+                ffmpeg_path.as_deref(),
             );
 
             let (success, stderr, file_path) = run_ytdlp(cmd, &id_clone, &app_clone).await;
