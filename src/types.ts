@@ -53,7 +53,8 @@ export interface DownloadItem {
   thumbnail?: string;
   mediaType: MediaType;
   format: MediaFormat;
-  quality: MediaQuality;
+  /** Qualidade legada (ex: "1080p") ou format_id real do yt-dlp (ex: "137") */
+  quality: MediaQuality | string;
   status: DownloadStatus;
   progress: number;        // 0–100
   speed?: string;          // e.g. "2.3 MiB/s"
@@ -69,7 +70,8 @@ export interface DownloadRequest {
   url: string;
   mediaType: MediaType;
   format: MediaFormat;
-  quality: MediaQuality;
+  /** Qualidade legada (ex: "1080p") ou format_id real do yt-dlp (ex: "137") */
+  quality: MediaQuality | string;
   outputDir?: string;
 }
 
@@ -118,4 +120,40 @@ export interface DownloadProgress {
   title?: string;
   filePath?: string;
   errorMessage?: string;
+}
+
+// ─── Format Picker ───────────────────────────────────────────────────────────
+
+export interface VideoFormatInfo {
+  format_id: string;
+  ext: string;
+  width?: number;
+  height?: number;
+  fps?: number;
+  vcodec: string;
+  acodec: string;   // "none" se stream adaptativo (sem áudio embutido)
+  tbr: number;
+  vbr: number;
+  filesize?: number;
+  has_audio: boolean;
+  label: string;    // ex: "1080p 30fps"
+}
+
+export interface AudioFormatInfo {
+  format_id: string;
+  ext: string;
+  acodec: string;
+  abr: number;
+  asr?: number;
+  filesize?: number;
+  label: string;    // ex: "128 kbps (M4A)"
+}
+
+export interface FetchFormatsResult {
+  title: string;
+  thumbnail?: string;
+  duration?: number;
+  webpage_url?: string;
+  video_formats: VideoFormatInfo[];
+  audio_formats: AudioFormatInfo[];
 }

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DownloaderForm } from "./components/DownloaderForm";
 import { DownloadList } from "./components/DownloadList";
+import { Particles } from "./components/Particles";
 import { DownloadItem, DownloadRequest, DownloadStatus } from "./types";
 import "./App.css";
 
@@ -189,6 +190,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <Particles count={45} />
       <div className="app-container">
         <DownloaderForm onDownload={handleDownload} isLoading={isSubmitting} />
         <DownloadList

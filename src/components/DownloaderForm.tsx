@@ -1,96 +1,148 @@
 import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowDownToLine,
   Clipboard,
   X,
-  Clapperboard,
-  Music,
-  ChevronDown,
+  Search,
   Loader2,
 } from "lucide-react";
 import {
-  MediaType,
-  MediaFormat,
-  MediaQuality,
-  AudioFormat,
-  VideoFormat,
-  AudioQuality,
-  VideoQuality,
   DownloadRequest,
+  FetchFormatsResult,
   detectSource,
   SOURCE_LABELS,
-  VIDEO_QUALITY_LABELS,
-  AUDIO_QUALITY_LABELS,
 } from "../types";
+import { FormatPicker } from "./FormatPicker";
 
 interface Props {
   onDownload: (req: DownloadRequest) => void;
   isLoading?: boolean;
 }
 
-const AUDIO_FORMATS: AudioFormat[] = ["mp3", "aac", "opus", "flac", "wav"];
-const VIDEO_FORMATS: VideoFormat[] = ["mp4", "mkv", "mov", "webm"];
-const AUDIO_QUALITIES: AudioQuality[] = ["128k", "192k", "256k", "320k"];
-const VIDEO_QUALITIES: VideoQuality[] = ["360p", "480p", "720p", "1080p", "1440p", "2160p", "best"];
+// Parâmetros de playlist/rádio que devem ser removidos da URL
+const PLAYLIST_PARAMS = ["list", "index", "start_radio", "list_type", "ab_channel", "radio"];
+
+function cleanUrl(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    PLAYLIST_PARAMS.forEach((p) => u.searchParams.delete(p));
+    return u.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function isInstagramReel(url: string): boolean {
+  return /instagram\.com\/(reels?|reel)\//.test(url);
+}
+
+type Step = "input" | "fetching" | "picking";
 
 export function DownloaderForm({ onDownload, isLoading = false }: Props) {
   const [url, setUrl] = useState("");
-  const [mediaType, setMediaType] = useState<MediaType>("video");
-  const [format, setFormat] = useState<MediaFormat>("mp4");
-  const [quality, setQuality] = useState<MediaQuality>("1080p");
   const [detectedSource, setDetectedSource] = useState<string | null>(null);
+  const [isReel, setIsReel] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+
+  const [step, setStep] = useState<Step>("input");
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [formatsResult, setFormatsResult] = useState<FetchFormatsResult | null>(null);
 
   useEffect(() => {
     if (!url.trim()) {
       setDetectedSource(null);
+      setIsReel(false);
       setUrlError(null);
       return;
     }
     try {
       new URL(url.trim());
       const src = detectSource(url);
-      setDetectedSource(SOURCE_LABELS[src]);
+      const reel = isInstagramReel(url);
+      setDetectedSource(reel ? "Instagram Reel" : SOURCE_LABELS[src]);
+      setIsReel(reel);
       setUrlError(null);
     } catch {
       setDetectedSource(null);
+      setIsReel(false);
       setUrlError("URL inválida");
     }
   }, [url]);
 
-  useEffect(() => {
-    if (mediaType === "audio") {
-      setFormat("mp3");
-      setQuality("320k");
-    } else {
-      setFormat("mp4");
-      setQuality("1080p");
-    }
-  }, [mediaType]);
-
-  const formats = mediaType === "audio" ? AUDIO_FORMATS : VIDEO_FORMATS;
-  const qualities =
-    mediaType === "audio"
-      ? AUDIO_QUALITIES.map((q) => ({ value: q, label: AUDIO_QUALITY_LABELS[q] }))
-      : VIDEO_QUALITIES.map((q) => ({ value: q, label: VIDEO_QUALITY_LABELS[q] }));
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleFetch() {
     if (!url.trim() || urlError) return;
-    onDownload({ url: url.trim(), mediaType, format, quality });
-    setUrl("");
+    const cleaned = cleanUrl(url.trim());
+    setStep("fetching");
+    setFetchError(null);
+    try {
+      const result = await invoke<FetchFormatsResult>("fetch_formats", { url: cleaned });
+      setFormatsResult(result);
+      setStep("picking");
+    } catch (err) {
+      setFetchError(typeof err === "string" ? err : "Erro ao buscar formatos.");
+      setStep("input");
+    }
+  }
+
+  function handleBack() {
+    setStep("input");
+    setFormatsResult(null);
+    setFetchError(null);
+  }
+
+  function handleSelect(quality: string, mediaType: "video" | "audio", ext: string) {
+    if (!formatsResult) return;
+    const outputExt = mediaType === "audio" ? "mp3" : ext;
+    onDownload({
+      url: cleanUrl(url.trim()),
+      mediaType,
+      format: outputExt as DownloadRequest["format"],
+      quality,
+    });
   }
 
   function handlePaste() {
     navigator.clipboard.readText().then((text) => {
-      if (text) setUrl(text.trim());
+      if (text) {
+        setUrl(text.trim());
+        setStep("input");
+        setFormatsResult(null);
+      }
     });
   }
 
-  const canSubmit = url.trim().length > 0 && !urlError && !isLoading;
+  const canFetch = url.trim().length > 0 && !urlError && step !== "fetching";
 
+  // ── Etapa 2: seleção de formato ──────────────────────────────────────────
+  if (step === "picking" && formatsResult) {
+    return (
+      <div className="downloader-form">
+        <div className="form-header">
+          <span className="form-icon">
+            <ArrowDownToLine size={26} strokeWidth={2.5} />
+          </span>
+          <div>
+            <h1 className="form-title">mptube</h1>
+            <p className="form-subtitle">Escolha o formato para baixar</p>
+          </div>
+        </div>
+        <FormatPicker
+          result={formatsResult}
+          onSelect={handleSelect}
+          onBack={handleBack}
+          isLoading={isLoading}
+        />
+      </div>
+    );
+  }
+
+  // ── Etapa 1: entrada de URL ───────────────────────────────────────────────
   return (
-    <form className="downloader-form" onSubmit={handleSubmit}>
+    <form
+      className="downloader-form"
+      onSubmit={(e) => { e.preventDefault(); handleFetch(); }}
+    >
       {/* Header */}
       <div className="form-header">
         <span className="form-icon">
@@ -107,12 +159,14 @@ export function DownloaderForm({ onDownload, isLoading = false }: Props) {
         <label className="form-label">Cole uma URL</label>
         <div className={`url-input-wrapper ${urlError ? "has-error" : ""} ${detectedSource ? "has-source" : ""}`}>
           {detectedSource && (
-            <span className="source-badge">{detectedSource}</span>
+            <span className={`source-badge ${isReel ? "source-badge--reel" : ""}`}>
+              {detectedSource}
+            </span>
           )}
           <input
             type="text"
             className="url-input"
-            placeholder="https://youtube.com/watch?v=..."
+            placeholder="https://youtube.com/watch?v=... ou instagram.com/reel/..."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             spellCheck={false}
@@ -140,87 +194,27 @@ export function DownloaderForm({ onDownload, isLoading = false }: Props) {
           </div>
         </div>
         {urlError && <span className="field-error">{urlError}</span>}
+        {isReel && !urlError && (
+          <span className="field-hint">🎬 Reel detectado — escolha Vídeo ou Áudio na próxima etapa</span>
+        )}
+        {fetchError && <span className="field-error">{fetchError}</span>}
       </div>
 
-      {/* Media Type */}
-      <div className="form-group">
-        <label className="form-label">Tipo</label>
-        <div className="radio-group">
-          {(["video", "audio"] as MediaType[]).map((t) => (
-            <label key={t} className={`radio-option ${mediaType === t ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="mediaType"
-                value={t}
-                checked={mediaType === t}
-                onChange={() => setMediaType(t)}
-              />
-              <span className="radio-icon">
-                {t === "video"
-                  ? <Clapperboard size={16} strokeWidth={1.8} />
-                  : <Music size={16} strokeWidth={1.8} />
-                }
-              </span>
-              <span className="radio-label">{t === "video" ? "Vídeo" : "Áudio"}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Format & Quality Row */}
-      <div className="form-row">
-        <div className="form-group">
-          <label className="form-label">Formato</label>
-          <div className="select-wrapper">
-            <select
-              className="form-select"
-              value={format}
-              onChange={(e) => setFormat(e.target.value as MediaFormat)}
-            >
-              {formats.map((f) => (
-                <option key={f} value={f}>
-                  {f.toUpperCase()}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="select-chevron" strokeWidth={2} />
-          </div>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Qualidade</label>
-          <div className="select-wrapper">
-            <select
-              className="form-select"
-              value={quality}
-              onChange={(e) => setQuality(e.target.value as MediaQuality)}
-            >
-              {qualities.map((q) => (
-                <option key={q.value} value={q.value}>
-                  {q.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="select-chevron" strokeWidth={2} />
-          </div>
-        </div>
-      </div>
-
-      {/* Submit */}
+      {/* Fetch button */}
       <button
         type="submit"
-        className={`btn-download ${isLoading ? "loading" : ""}`}
-        disabled={!canSubmit}
+        className={`btn-download ${step === "fetching" ? "loading" : ""}`}
+        disabled={!canFetch}
       >
-        {isLoading ? (
+        {step === "fetching" ? (
           <>
             <Loader2 size={16} strokeWidth={2.5} className="spin-icon" />
-            Processando...
+            Buscando formatos...
           </>
         ) : (
           <>
-            <ArrowDownToLine size={16} strokeWidth={2.5} />
-            BAIXAR
+            <Search size={16} strokeWidth={2.5} />
+            BUSCAR FORMATOS
           </>
         )}
       </button>
