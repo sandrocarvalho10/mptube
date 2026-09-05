@@ -40,6 +40,7 @@ export type DownloadStatus =
   | "fetching_info"
   | "downloading"
   | "converting"
+  | "retrying"
   | "done"
   | "error"
   | "cancelled";
@@ -61,6 +62,9 @@ export interface DownloadItem {
   eta?: string;            // e.g. "00:45"
   filePath?: string;
   errorMessage?: string;
+  /** Preenchido quando o backend está tentando novamente após um erro transitório. */
+  attempt?: number;
+  maxAttempts?: number;
   createdAt: number;       // timestamp ms
 }
 
@@ -73,6 +77,9 @@ export interface DownloadRequest {
   /** Qualidade legada (ex: "1080p") ou format_id real do yt-dlp (ex: "137") */
   quality: MediaQuality | string;
   outputDir?: string;
+  /** Conhecidos desde a etapa de seleção de formato — usados só para exibição imediata. */
+  title?: string;
+  thumbnail?: string;
 }
 
 // ─── Source Detection ────────────────────────────────────────────────────────
@@ -120,6 +127,8 @@ export interface DownloadProgress {
   title?: string;
   filePath?: string;
   errorMessage?: string;
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 // ─── Format Picker ───────────────────────────────────────────────────────────

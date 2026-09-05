@@ -48,5 +48,21 @@ rm -f "$TMP_ZIP"
 rm -rf "$DEST/ffmpeg-tmp"
 
 echo ""
+echo "→ yt-dlp Linux x86_64..."
+curl -L "$BASE/yt-dlp_linux" -o "$DEST/yt-dlp-x86_64-unknown-linux-gnu"
+chmod +x "$DEST/yt-dlp-x86_64-unknown-linux-gnu"
+
+# ffmpeg estático para Linux (John Van Sickle builds)
+echo "→ ffmpeg Linux x86_64..."
+TMP_TAR="$DEST/ffmpeg-linux.tar.xz"
+curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o "$TMP_TAR"
+mkdir -p "$DEST/ffmpeg-linux-tmp"
+tar -xf "$TMP_TAR" -C "$DEST/ffmpeg-linux-tmp" --strip-components=1
+cp "$DEST/ffmpeg-linux-tmp/ffmpeg" "$DEST/ffmpeg-x86_64-unknown-linux-gnu"
+chmod +x "$DEST/ffmpeg-x86_64-unknown-linux-gnu"
+rm -f "$TMP_TAR"
+rm -rf "$DEST/ffmpeg-linux-tmp"
+
+echo ""
 echo "✓ Binários prontos em $DEST/"
 ls -lh "$DEST/"

@@ -28,5 +28,13 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // Permite rodar `pnpm dev` contra o mptube-server local (versão web) sem CORS.
+    // Inofensivo no `tauri dev` — o app desktop nunca chama `/api`.
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8080",
+        ws: true,
+      },
+    },
   },
 }));

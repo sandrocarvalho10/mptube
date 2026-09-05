@@ -25,6 +25,7 @@ const STATUS_LABELS: Record<DownloadStatus, string> = {
   fetching_info: "Obtendo informações...",
   downloading: "Baixando",
   converting: "Convertendo...",
+  retrying: "Tentando novamente...",
   done: "Concluído",
   error: "Erro",
   cancelled: "Cancelado",
@@ -42,12 +43,12 @@ function progressBarColor(status: DownloadStatus): string {
   if (status === "done")      return "var(--color-success)";
   if (status === "error")     return "var(--color-error)";
   if (status === "cancelled") return "var(--color-muted)";
-  if (status === "converting") return "var(--color-warning)";
+  if (status === "converting" || status === "retrying") return "var(--color-warning)";
   return "var(--color-accent)";
 }
 
 export function DownloadItemCard({ item, onCancel, onRetry, onOpen }: Props) {
-  const isActive   = item.status === "downloading" || item.status === "converting" || item.status === "fetching_info";
+  const isActive   = item.status === "downloading" || item.status === "converting" || item.status === "fetching_info" || item.status === "retrying";
   const isDone     = item.status === "done";
   const isError    = item.status === "error";
   const isCancelled = item.status === "cancelled";
@@ -58,15 +59,20 @@ export function DownloadItemCard({ item, onCancel, onRetry, onOpen }: Props) {
   const progressDisplay =
     item.status === "fetching_info" ? "..." :
     item.status === "converting"    ? <Settings size={13} className="spin-icon" /> :
+    item.status === "retrying"      ? <RotateCcw size={13} className="spin-icon" /> :
     `${Math.round(item.progress)}%`;
 
   return (
     <div className={`download-card ${item.status}`}>
       {/* Card Header */}
       <div className="download-card-header">
-        <span className="download-icon">
-          <MediaIcon item={item} />
-        </span>
+        {item.thumbnail ? (
+          <img className="download-thumbnail" src={item.thumbnail} alt="" />
+        ) : (
+          <span className="download-icon">
+            <MediaIcon item={item} />
+          </span>
+        )}
 
         <div className="download-info">
           <span className="download-title" title={displayTitle}>
@@ -77,6 +83,8 @@ export function DownloadItemCard({ item, onCancel, onRetry, onOpen }: Props) {
             {item.quality && ` · ${item.quality}`}
             {isActive && item.speed && ` · ${item.speed}`}
             {isActive && item.eta && ` · ETA ${item.eta}`}
+            {item.status === "retrying" && item.attempt && item.maxAttempts &&
+              ` · Tentativa ${item.attempt}/${item.maxAttempts}`}
           </span>
         </div>
 

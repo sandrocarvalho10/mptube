@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import * as api from "./api";
 import { DownloaderForm } from "./components/DownloaderForm";
 import { DownloadList } from "./components/DownloadList";
 import { Particles } from "./components/Particles";
@@ -62,12 +61,10 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [simIntervals] = useState<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // Listen to Tauri backend progress events.
-  // The Rust backend sends snake_case fields, so we cast to `any` and remap.
+  // Assina o stream de progresso (Tauri events no desktop, WebSocket na web).
+  // O backend Rust manda campos em snake_case, então remapeamos aqui.
   useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const unlisten = listen<any>("download-progress", (event) => {
-      const p = event.payload;
+    const unsubscribe = api.onProgress((p: api.RawProgress) => {
       setItems((prev) =>
         prev.map((item) =>
           item.id === p.id
@@ -80,15 +77,15 @@ function App() {
                 title: p.title ?? item.title,
                 filePath: p.file_path ?? p.filePath ?? item.filePath,
                 errorMessage: p.error_message ?? p.errorMessage ?? item.errorMessage,
+                attempt: p.attempt ?? undefined,
+                maxAttempts: p.max_attempts ?? p.maxAttempts ?? undefined,
               }
             : item
         )
       );
     });
 
-    return () => {
-      unlisten.then((fn) => fn());
-    };
+    return unsubscribe;
   }, []);
 
   const handleDownload = useCallback(
@@ -99,7 +96,8 @@ function App() {
       const newItem: DownloadItem = {
         id,
         url: req.url,
-        title: "",
+        title: req.title ?? "",
+        thumbnail: req.thumbnail,
         mediaType: req.mediaType,
         format: req.format,
         quality: req.quality,
@@ -112,13 +110,7 @@ function App() {
       setIsSubmitting(false);
 
       try {
-        await invoke("start_download", {
-          id,
-          url: req.url,
-          mediaType: req.mediaType,
-          format: req.format,
-          quality: req.quality,
-        });
+        await api.startDownload(id, req);
       } catch (_err) {
         // Backend not yet built — run simulation so UI is fully testable
         console.warn("start_download unavailable, running simulation");
@@ -145,7 +137,7 @@ function App() {
       );
 
       try {
-        await invoke("cancel_download", { id });
+        await api.cancelDownload(id);
       } catch {
         // Not yet implemented
       }
@@ -162,20 +154,18 @@ function App() {
         mediaType: item.mediaType,
         format: item.format,
         quality: item.quality,
+        title: item.title,
+        thumbnail: item.thumbnail,
       });
     },
     [items, handleDownload]
   );
 
   const handleOpen = useCallback(
-    async (id: string) => {
+    (id: string) => {
       const item = items.find((i) => i.id === id);
-      if (!item?.filePath) return;
-      try {
-        await invoke("open_file", { path: item.filePath });
-      } catch {
-        console.warn("open_file not available");
-      }
+      if (!item) return;
+      api.openOrDownloadFile({ id: item.id, filePath: item.filePath });
     },
     [items]
   );

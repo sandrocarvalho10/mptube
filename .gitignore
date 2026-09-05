@@ -25,3 +25,11 @@ dist-ssr
 
 # Binários embutidos (baixados via script, não versionados)
 src-tauri/binaries/
+
+# Rust (workspace: crates/, src-tauri/, server/ compartilham este target/)
+/target
+
+# Servidor web: variáveis de ambiente e downloads locais (não versionar)
+.env
+/data/
+

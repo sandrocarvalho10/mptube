@@ -1,0 +1,12 @@
+services:
+  mptube-server:
+    build: .
+    image: mptube-server:latest
+    restart: unless-stopped
+    # Só escuta em localhost — o nginx do host é quem expõe pra internet (ver deploy/nginx.mptube.conf.example).
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data

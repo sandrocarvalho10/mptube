@@ -1,0 +1,10 @@
+node_modules
+dist
+target
+src-tauri/binaries
+src-tauri/gen
+src-tauri/target
+data
+.git
+.env
+*.log

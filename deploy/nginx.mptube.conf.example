@@ -1,0 +1,48 @@
+# Exemplo de bloco de servidor nginx para o mptube-server.
+# Copie para /etc/nginx/sites-available/mptube, ajuste SEUDOMINIO.com,
+# ative com `ln -s` em sites-enabled, rode `nginx -t` e depois
+# `systemctl reload nginx`. Depois rode `certbot --nginx -d SEUDOMINIO.com`
+# para emitir o certificado TLS (o certbot edita este arquivo automaticamente
+# para adicionar o bloco `listen 443 ssl` e redirecionar HTTP -> HTTPS).
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name SEUDOMINIO.com;
+
+    # Uploads são só JSON pequeno (url/formato/qualidade) — não há upload de arquivo.
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket de progresso (/api/ws) precisa dos headers de upgrade.
+    location /api/ws {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1h; # mantém a conexão aberta durante downloads longos
+    }
+
+    # Downloads de vídeo podem demorar mais que o timeout padrão do nginx.
+    location /api/downloads/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}

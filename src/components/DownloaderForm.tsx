@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "../api";
 import {
   ArrowDownToLine,
   Clipboard,
@@ -76,7 +76,7 @@ export function DownloaderForm({ onDownload, isLoading = false }: Props) {
     setStep("fetching");
     setFetchError(null);
     try {
-      const result = await invoke<FetchFormatsResult>("fetch_formats", { url: cleaned });
+      const result = await api.fetchFormats(cleaned);
       setFormatsResult(result);
       setStep("picking");
     } catch (err) {
@@ -99,6 +99,8 @@ export function DownloaderForm({ onDownload, isLoading = false }: Props) {
       mediaType,
       format: outputExt as DownloadRequest["format"],
       quality,
+      title: formatsResult.title,
+      thumbnail: formatsResult.thumbnail,
     });
   }
 
