@@ -274,6 +274,26 @@ pub fn build_ytdlp_cmd(
 /// Mata o processo e retorna erro se ficar `STALL_TIMEOUT` sem nenhuma linha de stdout.
 const STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Linhas que marcam a virada do download (rede) para o merge/reencode local
+/// (ffmpeg). Nessa fase o yt-dlp fica calado no stdout enquanto o ffmpeg
+/// reencoda (`-c:v libx264 ...`), o que pode levar bem mais que
+/// `STALL_TIMEOUT` para vídeos longos/grandes — sem isso, o stall-timeout
+/// mata o yt-dlp no meio do reencode, deixando o ffmpeg órfão ainda
+/// escrevendo no mesmo arquivo de saída enquanto a tentativa seguinte já
+/// começa a escrever nele também, corrompendo o vídeo final.
+fn is_postprocessing_marker(line: &str) -> bool {
+    const MARKERS: [&str; 7] = [
+        "[Merger]",
+        "[ExtractAudio]",
+        "[VideoConvertor]",
+        "[Fixup",
+        "[Metadata]",
+        "[EmbedThumbnail]",
+        "[EmbedSubtitle]",
+    ];
+    MARKERS.iter().any(|m| line.starts_with(m))
+}
+
 pub async fn run_ytdlp(
     mut cmd: Command,
     id: &str,
@@ -291,12 +311,34 @@ pub async fn run_ytdlp(
     let mut out_lines = BufReader::new(stdout).lines();
     let mut err_lines = BufReader::new(stderr).lines();
     let mut last_file_path: Option<String> = None;
+    let mut postprocessing = false;
 
     loop {
-        match tokio::time::timeout(STALL_TIMEOUT, out_lines.next_line()).await {
+        let next = if postprocessing {
+            Ok(out_lines.next_line().await)
+        } else {
+            tokio::time::timeout(STALL_TIMEOUT, out_lines.next_line()).await
+        };
+        match next {
             Ok(Ok(Some(line))) => {
                 if !line.starts_with('[') && !line.is_empty() {
                     last_file_path = Some(line.clone());
+                    continue;
+                }
+                if !postprocessing && is_postprocessing_marker(&line) {
+                    postprocessing = true;
+                    let _ = progress_tx.send(DownloadProgress {
+                        id: id.to_string(),
+                        progress: 100.0,
+                        speed: None,
+                        eta: None,
+                        status: "converting".to_string(),
+                        title: None,
+                        file_path: None,
+                        error_message: None,
+                        attempt: None,
+                        max_attempts: None,
+                    });
                     continue;
                 }
                 if let Some((progress, speed, eta)) = parse_progress(&line) {

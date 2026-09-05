@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import * as api from "./api";
 import { DownloaderForm } from "./components/DownloaderForm";
 import { DownloadList } from "./components/DownloadList";
@@ -60,6 +61,7 @@ function App() {
   const [items, setItems] = useState<DownloadItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [simIntervals] = useState<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const autoDownloaded = useRef<Set<string>>(new Set());
 
   // Assina o stream de progresso (Tauri events no desktop, WebSocket na web).
   // O backend Rust manda campos em snake_case, então remapeamos aqui.
@@ -83,6 +85,13 @@ function App() {
             : item
         )
       );
+
+      // Na web, o arquivo fica no servidor: dispara o download no navegador
+      // assim que o processamento termina, em vez de esperar clique manual.
+      if (p.status === "done" && !isTauri() && !autoDownloaded.current.has(p.id)) {
+        autoDownloaded.current.add(p.id);
+        api.openOrDownloadFile({ id: p.id });
+      }
     });
 
     return unsubscribe;
