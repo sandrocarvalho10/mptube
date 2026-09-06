@@ -5,15 +5,32 @@ se você quiser HTTPS).
 
 ## 1. Primeira vez
 
+A imagem (frontend + servidor Rust + yt-dlp/ffmpeg) é buildada pelo CI
+(`.github/workflows/web.yml`) a cada push na `main` e publicada no GHCR — a
+VPS só baixa a imagem pronta, **sem compilar nada localmente** (importante em
+VPS com pouca RAM: compilar o Rust ali pode não caber).
+
+O pacote no GHCR nasce privado por padrão, mesmo com o repositório público.
+Antes do primeiro `pull`, faça login na VPS uma vez com um
+[Personal Access Token](https://github.com/settings/tokens) com escopo
+`read:packages` (ou torne o pacote público em
+`github.com/users/sandrocarvalho10/packages/container/mptube-server/settings`
+e pule o login):
+
+```bash
+echo "<seu-PAT>" | docker login ghcr.io -u sandrocarvalho10 --password-stdin
+```
+
 ```bash
 git clone <seu-repositorio> mptube
 cd mptube
 cp .env.example .env
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-Isso builda a imagem (frontend + servidor Rust + yt-dlp/ffmpeg) e sobe o
-container escutando em `127.0.0.1:8080` — não exposto direto na internet.
+Isso baixa a imagem já pronta e sobe o container escutando em
+`127.0.0.1:8080` — não exposto direto na internet.
 
 Confira que subiu:
 
@@ -39,20 +56,21 @@ certbot --nginx -d SEUDOMINIO.com
 
 ## 3. Atualizar depois de mudanças no código
 
+Espere o workflow "Build web (Docker)" terminar no GitHub Actions (builda,
+testa e publica a imagem), depois:
+
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 ## 4. Atualizar só o yt-dlp (quando o YouTube muda algo e passa a falhar)
 
-O `yt-dlp` é baixado direto do GitHub na hora do build da imagem, então basta
-rebuildar sem cache para pegar a versão mais nova:
-
-```bash
-docker compose build --no-cache
-docker compose up -d
-```
+O `yt-dlp` é baixado direto do GitHub na hora do build da imagem no CI. Rode o
+workflow "Build web (Docker)" manualmente (aba Actions → Run workflow) pra
+gerar uma imagem nova com a versão mais recente, depois `docker compose pull
+&& docker compose up -d` na VPS.
 
 ## Variáveis de ambiente
 

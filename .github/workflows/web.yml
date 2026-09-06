@@ -43,6 +43,13 @@ on:
       - ".github/workflows/web.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/sandrocarvalho10/mptube-server
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -54,9 +61,8 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Só builda a imagem (sem push) — o objetivo é pegar quebra de build
-      # (frontend, Rust do server, Dockerfile) antes de chegar na VPS, já que
-      # o deploy da web é manual (ver DEPLOY.md).
+      # Builda e testa localmente antes de publicar — carrega no daemon (load)
+      # em vez de já dar push, pra rodar o smoke test abaixo primeiro.
       - name: Build image
         uses: docker/build-push-action@v6
         with:
@@ -84,3 +90,22 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f mptube-server-ci || true
+
+      # Publica a imagem já validada acima no GHCR, só em push na main — assim
+      # a VPS (1GB RAM) só precisa dar `docker compose pull`, sem compilar o
+      # Rust localmente (ver DEPLOY.md).
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag mptube-server:ci "$IMAGE:latest"
+          docker tag mptube-server:ci "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
