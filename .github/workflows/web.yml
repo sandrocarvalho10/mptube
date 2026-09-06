@@ -1,0 +1,85 @@
+name: Build web (Docker)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "server/**"
+      - "crates/**"
+      - "src/**"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/src/**"
+      - "public/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "server/**"
+      - "crates/**"
+      - "src/**"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/src/**"
+      - "public/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    name: Build mptube-server image
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Só builda a imagem (sem push) — o objetivo é pegar quebra de build
+      # (frontend, Rust do server, Dockerfile) antes de chegar na VPS, já que
+      # o deploy da web é manual (ver DEPLOY.md).
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: mptube-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (container starts and responds)
+        run: |
+          docker run -d --name mptube-server-ci -p 8080:8080 mptube-server:ci
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8080/ >/dev/null; then
+              echo "✓ servidor respondeu"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "✗ servidor não respondeu em 20s"
+          docker logs mptube-server-ci
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f mptube-server-ci || true
