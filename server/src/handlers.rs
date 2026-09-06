@@ -216,6 +216,8 @@ pub async fn start_download_handler(
             &id,
             &progress_tx,
             mptube_core::RetryConfig::default(),
+            &media_type,
+            ffmpeg_path.as_deref(),
         )
         .await;
 

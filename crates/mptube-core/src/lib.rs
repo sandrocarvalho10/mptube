@@ -251,13 +251,15 @@ pub fn build_ytdlp_cmd(
             .arg("--audio-quality")
             .arg("0");
     } else {
-        // Força H.264 + AAC em MP4 para compatibilidade com QuickTime/iPhone.
-        // -c:v libx264: reencoda vídeo para H.264 (crf 18 = alta qualidade)
-        // -c:a aac -b:a 192k: reencoda áudio para AAC (cobre HE-AAC, opus, vorbis)
-        // -movflags +faststart: otimiza MP4 para streaming/preview rápido
+        // Faz o merge por stream-copy (sem reencodar): o --format-sort já prioriza
+        // H.264+AAC, então na imensa maioria dos casos (até 1080p) o resultado já
+        // sai compatível com QuickTime/iPhone — só que em segundos, sem perda de
+        // qualidade. Quando o vídeo baixado não é H.264/AAC (ex: 1440p/2160p só
+        // disponível em VP9/AV1), `ensure_h264_aac` reencoda o arquivo já local
+        // como fallback, sem precisar baixar de novo.
         cmd.arg("--merge-output-format").arg("mp4")
            .arg("--postprocessor-args")
-           .arg("Merger+ffmpeg:-c:v libx264 -crf 18 -preset fast -c:a aac -b:a 192k -movflags +faststart");
+           .arg("Merger+ffmpeg:-c:v copy -c:a copy -movflags +faststart");
     }
 
     cmd.arg(url)
@@ -376,6 +378,123 @@ pub async fn run_ytdlp(
     (success, stderr_buf, last_file_path)
 }
 
+/// Deriva o caminho do `ffprobe` a partir do `ffmpeg` bundled (mesma pasta).
+/// Sem `ffmpeg_path` (build usa o do sistema), assume `ffprobe` no PATH.
+fn ffprobe_path(ffmpeg_path: Option<&str>) -> String {
+    if let Some(p) = ffmpeg_path {
+        let path = std::path::Path::new(p);
+        if let Some(parent) = path.parent() {
+            let exe = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
+            let candidate = parent.join(exe);
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+    }
+    "ffprobe".to_string()
+}
+
+/// Confere (via ffprobe) se o arquivo já mesclado é H.264 vídeo + AAC áudio.
+/// Se não for — caso raro, quando a qualidade pedida só existe em VP9/AV1/Opus —
+/// reencoda o arquivo já baixado localmente (sem repetir o download) para manter
+/// a compatibilidade com QuickTime/iPhone que o merge por stream-copy não garante
+/// nesses casos.
+async fn ensure_h264_aac(
+    ffmpeg_path: Option<&str>,
+    file_path: &str,
+    id: &str,
+    progress_tx: &UnboundedSender<DownloadProgress>,
+) -> Result<(), String> {
+    let probe_bin = ffprobe_path(ffmpeg_path);
+    let output = Command::new(&probe_bin)
+        .arg("-v")
+        .arg("error")
+        .arg("-show_entries")
+        .arg("stream=codec_type,codec_name")
+        .arg("-of")
+        .arg("csv=p=0")
+        .arg(file_path)
+        .output()
+        .await
+        .map_err(|e| format!("ffprobe não encontrado: {}", e))?;
+
+    if !output.status.success() {
+        // Não deu para inspecionar — mantém o arquivo do stream-copy como está.
+        return Ok(());
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut video_codec: Option<String> = None;
+    let mut audio_codec: Option<String> = None;
+    for line in text.lines() {
+        let mut parts = line.splitn(2, ',');
+        let kind = parts.next().unwrap_or("");
+        let codec = parts.next().unwrap_or("").trim();
+        match kind {
+            "video" if video_codec.is_none() => video_codec = Some(codec.to_string()),
+            "audio" if audio_codec.is_none() => audio_codec = Some(codec.to_string()),
+            _ => {}
+        }
+    }
+
+    let needs_reencode = video_codec.as_deref().is_some_and(|c| c != "h264")
+        || audio_codec.as_deref().is_some_and(|c| c != "aac");
+
+    if !needs_reencode {
+        return Ok(());
+    }
+
+    let _ = progress_tx.send(DownloadProgress {
+        id: id.to_string(),
+        progress: 100.0,
+        speed: None,
+        eta: None,
+        status: "converting".to_string(),
+        title: None,
+        file_path: None,
+        error_message: None,
+        attempt: None,
+        max_attempts: None,
+    });
+
+    let ffmpeg_bin = ffmpeg_path.unwrap_or("ffmpeg");
+    let tmp_path = format!("{file_path}.reencode.mp4");
+
+    let status = Command::new(ffmpeg_bin)
+        .arg("-y")
+        .arg("-i")
+        .arg(file_path)
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-crf")
+        .arg("18")
+        .arg("-preset")
+        .arg("fast")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("192k")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg(&tmp_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map_err(|e| format!("ffmpeg não encontrado: {}", e))?;
+
+    if !status.success() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err("Falha ao reencodar vídeo para H.264/AAC".to_string());
+    }
+
+    tokio::fs::rename(&tmp_path, file_path)
+        .await
+        .map_err(|e| format!("Erro ao substituir arquivo reencodado: {}", e))?;
+
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RetryConfig {
     pub max_attempts: u32,
@@ -399,13 +518,26 @@ pub async fn run_ytdlp_with_retry(
     id: &str,
     progress_tx: &UnboundedSender<DownloadProgress>,
     retry: RetryConfig,
+    media_type: &str,
+    ffmpeg_path: Option<&str>,
 ) -> (bool, Vec<String>, Option<String>) {
     let mut attempt: u32 = 1;
     loop {
         let cmd = build_cmd();
         let (success, stderr, file_path) = run_ytdlp(cmd, id, progress_tx).await;
 
-        if success || attempt >= retry.max_attempts || !is_transient_error(&stderr) {
+        if success {
+            if media_type != "audio" {
+                if let Some(fp) = &file_path {
+                    if let Err(e) = ensure_h264_aac(ffmpeg_path, fp, id, progress_tx).await {
+                        return (false, vec![e], None);
+                    }
+                }
+            }
+            return (success, stderr, file_path);
+        }
+
+        if attempt >= retry.max_attempts || !is_transient_error(&stderr) {
             return (success, stderr, file_path);
         }
 

@@ -243,6 +243,8 @@ pub mod commands {
                 &id_clone,
                 &progress_tx,
                 RetryConfig::default(),
+                &media_type,
+                ffmpeg_path.as_deref(),
             )
             .await;
 
