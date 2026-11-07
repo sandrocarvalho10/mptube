@@ -7,8 +7,15 @@ import { Particles } from "./components/Particles";
 import { DownloadItem, DownloadRequest, DownloadStatus } from "./types";
 import "./App.css";
 
+// Na versão web o id funciona como "senha" do download (dá acesso ao arquivo e
+// ao cancelamento), então precisa ser imprevisível.
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // ─── Simulation (dev/no-backend fallback) ────────────────────────────────────

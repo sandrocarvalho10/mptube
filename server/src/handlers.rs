@@ -340,13 +340,30 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+/// Mensagem que o cliente manda pelo WebSocket para dizer quais downloads quer
+/// acompanhar: `{"watch": ["id1", "id2"]}`.
+#[derive(serde::Deserialize)]
+struct WatchMessage {
+    watch: Vec<String>,
+}
+
+/// Limite de ids acompanhados por conexão (evita crescer sem limite).
+const MAX_WATCHED_PER_SOCKET: usize = 200;
+
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.progress_tx.subscribe();
+    // Só repassa eventos dos downloads que ESTA conexão pediu. Antes todo
+    // cliente recebia o progresso (e o id) de todos os usuários, e com o id dá
+    // pra baixar ou cancelar o arquivo de outra pessoa.
+    let mut watched: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
         tokio::select! {
             msg = rx.recv() => {
                 match msg {
                     Ok(p) => {
+                        if !watched.contains(&p.id) {
+                            continue;
+                        }
                         let Ok(json) = serde_json::to_string(&p) else { continue };
                         if socket.send(Message::Text(json)).await.is_err() {
                             break;
@@ -358,6 +375,18 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
             }
             incoming = socket.recv() => {
                 match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(m) = serde_json::from_str::<WatchMessage>(&text) {
+                            for id in m.watch {
+                                if watched.len() >= MAX_WATCHED_PER_SOCKET {
+                                    break;
+                                }
+                                if valid_id(&id) {
+                                    watched.insert(id);
+                                }
+                            }
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
                     _ => {}

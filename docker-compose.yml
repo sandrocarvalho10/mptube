@@ -13,3 +13,13 @@ services:
       - .env
     volumes:
       - ./data:/data
+    # VPS de 1GB: limita o container pra um pico de ffmpeg/yt-dlp não derrubar
+    # sshd/nginx do host (o OOM killer mata só o container, que reinicia).
+    mem_limit: 700m
+    memswap_limit: 1500m
+    # Sem isso o log do Docker cresce sem limite e enche os 10GB de disco.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -53,13 +53,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       # ── pnpm ─────────────────────────────────────────────────────────────
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+        # Versão vem do campo "packageManager" do package.json.
+        uses: pnpm/action-setup@v4
 
       # ── Rust ──────────────────────────────────────────────────────────────
       - name: Setup Rust
@@ -71,7 +70,8 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # O workspace Cargo fica na raiz (target/ na raiz), não em src-tauri.
+          workspaces: ". -> target"
 
       # ── Dependências de sistema do Tauri (Linux) ────────────────────────────
       - name: Install system dependencies (Linux)
@@ -93,7 +93,7 @@ jobs:
 
       # ── Instalar dependências JS ──────────────────────────────────────────
       - name: Install JS dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # ── Baixar binários externos (yt-dlp) ─────────────────────────────────
       - name: Download yt-dlp binaries (Linux / macOS)

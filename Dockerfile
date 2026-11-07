@@ -30,10 +30,26 @@ RUN cargo build --release -p mptube-server
 # ── Stage 3: imagem final ─────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg curl ca-certificates python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp \
-    && chmod +x /usr/local/bin/yt-dlp
+      ffmpeg ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Deno: runtime JS que o yt-dlp usa para resolver os desafios do YouTube.
+# Sem ele vários formatos somem ou o download falha.
+COPY --from=denoland/deno:bin-2.6.0 /deno /usr/local/bin/deno
+
+# yt-dlp em camada própria e por último: o CI passa YTDLP_VERSION com a tag mais
+# recente, então só esta camada é refeita quando sai uma versão nova (sem isso o
+# cache do Docker reaproveitaria um yt-dlp antigo para sempre).
+# yt-dlp_linux é um binário autocontido, não precisa de python3.
+ARG YTDLP_VERSION=latest
+RUN if [ "$YTDLP_VERSION" = "latest" ]; then \
+      url=https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux; \
+    else \
+      url=https://github.com/yt-dlp/yt-dlp/releases/download/$YTDLP_VERSION/yt-dlp_linux; \
+    fi \
+    && curl -fL "$url" -o /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp \
+    && yt-dlp --version
 
 WORKDIR /app
 COPY --from=backend /app/target/release/mptube-server ./mptube-server

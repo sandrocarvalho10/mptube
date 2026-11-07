@@ -29,6 +29,23 @@ export async function fetchFormats(url: string): Promise<FetchFormatsResult> {
   return (await res.json()) as FetchFormatsResult;
 }
 
+// Web: ids dos downloads desta aba. O servidor só envia progresso dos ids que a
+// conexão pediu com `{"watch": [...]}`; reenviamos todos a cada reconexão.
+const watchedIds = new Set<string>();
+let activeSocket: WebSocket | null = null;
+
+function sendWatch(ids: string[]) {
+  if (ids.length === 0) return;
+  if (activeSocket?.readyState === WebSocket.OPEN) {
+    activeSocket.send(JSON.stringify({ watch: ids }));
+  }
+}
+
+function watchDownload(id: string) {
+  watchedIds.add(id);
+  sendWatch([id]);
+}
+
 export async function startDownload(id: string, req: DownloadRequest): Promise<void> {
   if (isTauri()) {
     await invoke("start_download", {
@@ -40,6 +57,8 @@ export async function startDownload(id: string, req: DownloadRequest): Promise<v
     });
     return;
   }
+  // Assina antes do POST para não perder o primeiro evento ("fetching_info").
+  watchDownload(id);
   const res = await fetch("/api/downloads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -89,6 +108,7 @@ export function onProgress(callback: (p: RawProgress) => void): () => void {
   function connect() {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${proto}//${window.location.host}/api/ws`);
+    activeSocket = socket;
     socket.onmessage = (ev) => {
       try {
         callback(JSON.parse(ev.data));
@@ -98,6 +118,7 @@ export function onProgress(callback: (p: RawProgress) => void): () => void {
     };
     socket.onopen = () => {
       retryDelay = 1000;
+      sendWatch([...watchedIds]);
     };
     socket.onclose = () => {
       if (closedByUser) return;
@@ -111,6 +132,7 @@ export function onProgress(callback: (p: RawProgress) => void): () => void {
   return () => {
     closedByUser = true;
     if (retryTimer) clearTimeout(retryTimer);
+    if (activeSocket === socket) activeSocket = null;
     socket?.close();
   };
 }

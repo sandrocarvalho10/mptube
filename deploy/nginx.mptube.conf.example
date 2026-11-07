@@ -5,6 +5,11 @@
 # para emitir o certificado TLS (o certbot edita este arquivo automaticamente
 # para adicionar o bloco `listen 443 ssl` e redirecionar HTTP -> HTTPS).
 
+# IMPORTANTE: X-Forwarded-For é SOBRESCRITO com $remote_addr (e não
+# $proxy_add_x_forwarded_for). O servidor usa o primeiro IP desse header para o
+# rate limit e o limite por IP; se o nginx só anexar, o cliente pode mandar um
+# X-Forwarded-For falso e burlar os dois limites.
+
 server {
     listen 80;
     listen [::]:80;
@@ -18,7 +23,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -30,7 +35,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 1h; # mantém a conexão aberta durante downloads longos
     }
@@ -41,7 +46,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
     }
